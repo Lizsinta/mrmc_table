@@ -26,7 +26,7 @@ def cal_angle(coor1, coor2, coor3):
 def run_feff(folder=''):
     while True:
         try:
-            info = win32process.CreateProcess('%s\\feff8.exe' % folder, '',
+            info = win32process.CreateProcess('%s\\feff.exe' % folder, '',
                                               None, None, 0, win32process.CREATE_NO_WINDOW,
                                               None, '%s' % folder, win32process.STARTUPINFO())
         except pywintypes.error:
@@ -136,6 +136,7 @@ class Worker(QThread):
         self.atom_info = []
         self.r_init = np.array([])
         self.folder = ''
+        self.feff_name = ''
         self.inp_name = 'feff.inp'
         self.run_flag = False
         self.run_status = np.zeros(3, dtype=int)
@@ -209,7 +210,7 @@ class Worker(QThread):
                         self.r_init[ipot] = dist
         self.inp_name = file_name.split('/')[-1]
         self.folder = file_name.split('/' + self.inp_name)[0]
-        decimals = -log10(self.step)
+        decimals = int(-log10(self.step))
         self.length = np.round(np.arange(self.l_head, self.l_tail + self.step, self.step), decimals)
         self.path_size = self.length.size ** 2 * self.angle.size
         self.index_create()
@@ -219,7 +220,7 @@ class Worker(QThread):
         return 'successfully read'
 
     def amount_change(self):
-        decimals = -log10(self.step)
+        decimals = int(-log10(self.step))
         self.length = np.round(np.arange(self.l_head, self.l_tail + self.step, self.step), decimals)
         self.path_size = self.length.size ** 2 * self.angle.size
         self.index_create()
@@ -232,7 +233,7 @@ class Worker(QThread):
         if not path.exists(self.folder + r'\temp'):
             makedirs(self.folder + r'\temp')
         popen('copy "%s" "%s"' % (self.folder + r'\%s' % self.inp_name, self.folder + r'\temp\feff.inp'))
-        popen('copy "%s" "%s"' % (os.getcwd() + r'\feff8.exe', self.folder + r'\temp\feff8.exe'))
+        popen('copy "%s" "%s"' % (os.getcwd() + r'\%s' % self.feff_name, self.folder + r'\temp\feff.exe'))
         sleep(0.5)
         with open(self.folder + r'\%s' % self.inp_name, 'r+') as f:
             while True:
@@ -280,7 +281,7 @@ class Worker(QThread):
         self.sig_statusbar.emit('finished', 3000)
 
     def index_create(self):
-        decimals = -log10(self.step)
+        decimals = int(-log10(self.step))
         self.second_sc = np.zeros((self.path_size, 2))
         self.first_sc = np.broadcast_to(self.length, (self.angle.size * self.length.size, self.length.size)).T.flatten()
         self.second_dist = np.zeros(self.path_size)
@@ -585,6 +586,7 @@ class MainWindow(QMainWindow, Ui_MainWindow_Table):
         self.endButton.clicked.connect(self.generate_stop)
         self.msBox.clicked.connect(self.ms_switch)
 
+
     def read_inp(self):
         file_name = QFileDialog.getOpenFileName(self, 'select inp file...', path.abspath('../..'), filter='*.inp')
         if file_name[0] == '':
@@ -610,8 +612,13 @@ class MainWindow(QMainWindow, Ui_MainWindow_Table):
         self.statusbar.showMessage(result, 3000)
 
     def generate_start(self):
-        if not os.path.exists(os.getcwd() + r'\feff8.exe'):
-            QMessageBox.critical(self, 'Error', 'feff8.exe not found.\nPlease put it on the same folder as this program')
+        f_list = os.listdir()
+        self.thread.feff_name = ''
+        for i in f_list:
+            if not i.split('.')[0].find('feff') == -1 and i.split('.')[1] == 'exe':
+                self.thread.feff_name = i
+        if self.thread.feff_name == '':
+            QMessageBox.critical(self, 'Error', 'feff not found.\nPlease put it on the same folder as this program')
             return
         self.startButton.setEnabled(False)
         self.pauseButton.setEnabled(True)
