@@ -33,7 +33,7 @@ missing module named grp - imported by subprocess (delayed, conditional, optiona
 missing module named fcntl - imported by subprocess (optional)
 missing module named multiprocessing.set_start_method - imported by multiprocessing (top-level), multiprocessing.spawn (top-level)
 missing module named multiprocessing.get_start_method - imported by multiprocessing (top-level), multiprocessing.spawn (top-level)
-missing module named pyimod02_importers - imported by J:\pythonProject\table generator\venv\Lib\site-packages\PyInstaller\hooks\rthooks\pyi_rth_pkgutil.py (top-level)
+missing module named pyimod02_importers - imported by D:\pythonProject\mrmc_generator\venv\Lib\site-packages\PyInstaller\hooks\rthooks\pyi_rth_pkgutil.py (top-level)
 missing module named _scproxy - imported by urllib.request (conditional)
 missing module named termios - imported by getpass (optional), tty (top-level)
 missing module named vms_lib - imported by platform (delayed, optional)
