@@ -4,11 +4,13 @@ from sys import argv, exit
 from time import sleep
 from os import makedirs, path, popen
 from math import acos, log10
+from time import perf_counter as timer
 
 import numpy as np
 import win32process
 import win32event
 import pywintypes
+import numba
 
 from ui_table import Ui_MainWindow as Ui_MainWindow_Table
 from PyQt5.QtGui import QIcon
@@ -16,17 +18,48 @@ from PyQt5.QtWidgets import QMainWindow, QFileDialog, QApplication, QMessageBox
 from PyQt5.QtCore import QThread, pyqtSignal
 import icon_rc
 
+
+@numba.jit(nopython=True)
+def ic(decimals: int, ssc: np.array([]), fsc: np.array([]), sd: np.array([]), td: np.array([]),
+       length: np.array([]), angle: np.array([])) -> list:
+    lsize = length.size
+    asize = angle.size
+    focus_index = []
+    focus_l = pi / 9
+    for i in range(lsize):
+        size_i = i * asize * lsize
+        for j in range(asize):
+            size_j = j * lsize
+            for k in range(lsize):
+                t_size = size_i + size_j + k
+                ssc[t_size][0] = length[k] * cos(angle[j]) + length[i]
+                ssc[t_size][1] = length[k] * sin(angle[j])
+                sd[t_size] = round(sqrt((ssc[t_size] ** 2).sum()), decimals)
+                td[t_size] = (length[i] + length[k] + sd[t_size]) / 2
+                if td[t_size] < 6 and sd[t_size] > 1.5:
+                    if ssc[t_size][0] > 0:
+                        if angle[j] <= focus_l:
+                            focus_index.append(t_size)
+                    elif ssc[t_size][0] < 0:
+                        a_range_2 = cal_angle(np.array([fsc[t_size], 0, 0]), np.zeros(3),
+                                              np.array([ssc[t_size][0], ssc[t_size][1], 0]))
+                        if a_range_2 <= focus_l:
+                            focus_index.append(t_size)
+    return focus_index
+
+@numba.jit(nopython=True)
 def cal_angle(coor1, coor2, coor3):
     vect1 = coor2 - coor1
     vect2 = coor3 - coor2
     transvection = round(np.sum(vect1 * vect2), 6)
-    module = round(sqrt(np.sum(vect1**2) * np.sum(vect2**2)), 6)
+    module = round(sqrt(np.sum(vect1 ** 2) * np.sum(vect2 ** 2)), 6)
     return round(acos(transvection / module) / pi * 180, 2)
+
 
 def run_feff(folder=''):
     while True:
         try:
-            info = win32process.CreateProcess('%s\\feff8.exe' % folder, '',
+            info = win32process.CreateProcess('%s\\feff.exe' % folder, '',
                                               None, None, 0, win32process.CREATE_NO_WINDOW,
                                               None, '%s' % folder, win32process.STARTUPINFO())
         except pywintypes.error:
@@ -174,7 +207,7 @@ class Worker(QThread):
                         atoms = np.append(atoms, lines.split()[2])
                         self.atom_info.append('   %s    %s' % (lines.split()[1], atoms[-1]))
                     for i in range(atoms.size):
-                        self.atom[i+1] = atoms[i]
+                        self.atom[i + 1] = atoms[i]
                     self.r_init = np.zeros(atoms.size + 1)
                     print(self.atom)
                     print(self.atom_info)
@@ -213,9 +246,12 @@ class Worker(QThread):
         self.length = np.round(np.arange(self.l_head, self.l_tail + self.step, self.step), decimals)
         self.path_size = self.length.size ** 2 * self.angle.size
         self.index_create()
+
         self.cal_amount = (self.length.size + np.where(self.length <= 3)[0].size) * (self.r_init.size - 1)
         if self.ms:
+            print(self.cal_amount, self.focus_index.size , self.r_init)
             self.cal_amount += self.focus_index.size * (self.r_init.size - 1) * self.r_init.size
+            print(self.cal_amount)
         return 'successfully read'
 
     def amount_change(self):
@@ -227,12 +263,12 @@ class Worker(QThread):
         if self.ms:
             self.cal_amount += self.focus_index.size * (self.r_init.size - 1) * self.r_init.size
 
-    def file_init(self):
+    def file_init(self, name):
         self.sig_statusbar.emit('Inp initializing', 0)
         if not path.exists(self.folder + r'\temp'):
             makedirs(self.folder + r'\temp')
         popen('copy "%s" "%s"' % (self.folder + r'\%s' % self.inp_name, self.folder + r'\temp\feff.inp'))
-        popen('copy "%s" "%s"' % (os.getcwd() + r'\feff8.exe', self.folder + r'\temp\feff8.exe'))
+        popen('copy "%s" "%s"' % (os.getcwd() + r'\%s' % name, self.folder + r'\temp\feff.exe'))
         sleep(0.5)
         with open(self.folder + r'\%s' % self.inp_name, 'r+') as f:
             while True:
@@ -285,38 +321,21 @@ class Worker(QThread):
         self.first_sc = np.broadcast_to(self.length, (self.angle.size * self.length.size, self.length.size)).T.flatten()
         self.second_dist = np.zeros(self.path_size)
         self.total_dist = np.zeros(self.path_size)
-        self.focus_index = np.array([], dtype=int)
-        focus_l = pi / 9
-        for i in range(self.length.size):
-            size_i = i * self.angle.size * self.length.size
-            for j in range(self.angle.size):
-                size_j = j * self.length.size
-                for k in range(self.length.size):
-                    t_size = size_i + size_j + k
-                    self.second_sc[t_size][0] = self.length[k] * cos(self.angle[j]) + self.length[i]
-                    self.second_sc[t_size][1] = self.length[k] * sin(self.angle[j])
-                    self.second_dist[t_size] = round(sqrt((self.second_sc[t_size] ** 2).sum()), decimals)
-                    self.total_dist[t_size] = (self.length[i] + self.length[k] + self.second_dist[t_size]) / 2
-                    if self.total_dist[t_size] < 6 and self.second_dist[t_size] > 1.5:
-                        if self.second_sc[t_size][0] > 0:
-                            if self.angle[j] <= focus_l:
-                                self.focus_index = np.append(self.focus_index, t_size)
-                        elif self.second_sc[t_size][0] < 0:
-                            a_range_2 = cal_angle(np.array([self.first_sc[t_size], 0, 0]), np.zeros(3),
-                                                  np.array([self.second_sc[t_size][0],
-                                                            self.second_sc[t_size][1], 0]))
-                            if a_range_2 <= focus_l:
-                                self.focus_index = np.append(self.focus_index, t_size)
+        start = timer()
+        fi = ic(decimals, self.second_sc, self.first_sc, self.second_dist, self.total_dist,
+                                         self.length, self.angle)
+        self.focus_index = np.asarray(fi, dtype=int)
+        print(timer() - start)
 
     def run(self):
         if self.run_status[0] == 0:
-            for i in range(self.run_status[1], self.r_init.size-1):
+            for i in range(self.run_status[1], self.r_init.size - 1):
                 if self.run_flag:
                     if self.run_status[2] == 0:
-                        if not path.exists(self.folder + r'\table2_%d'%(self.run_status[1] + 1)):
-                            makedirs(self.folder + r'\table2_%d'%(self.run_status[1] + 1))
-                        if not path.exists(self.folder + r'\table2s_%d'%(self.run_status[1] + 1)):
-                            makedirs(self.folder + r'\table2s_%d'%(self.run_status[1] + 1))
+                        if not path.exists(self.folder + r'\table2_%d' % (self.run_status[1] + 1)):
+                            makedirs(self.folder + r'\table2_%d' % (self.run_status[1] + 1))
+                        if not path.exists(self.folder + r'\table2s_%d' % (self.run_status[1] + 1)):
+                            makedirs(self.folder + r'\table2s_%d' % (self.run_status[1] + 1))
                     self.feff_table_s_full(self.run_status[1] + 1)
                     if self.run_flag:
                         self.run_status[2] = 0
@@ -331,7 +350,7 @@ class Worker(QThread):
             if self.run_status[0] == 1:
                 count = 0
                 for j in range(1, self.r_init.size):
-                    for i in range(1, j+1):
+                    for i in range(1, j + 1):
                         if self.run_flag:
                             if count == self.run_status[1]:
                                 if self.run_status[2] == 0:
@@ -421,7 +440,7 @@ class Worker(QThread):
                 length_a = len(f.readline())
                 coor = np.zeros(3)
                 coor[i] += self.r_init[label[i]]
-                data = '   %.5f     %.5f    %.5f     %d   %s' % (coor[0], coor[1], coor[2], i+1, self.atom[label[i]])
+                data = '   %.5f     %.5f    %.5f     %d   %s' % (coor[0], coor[1], coor[2], i + 1, self.atom[label[i]])
                 data = data.ljust(length_a - 1) if length_a > len(data) else data
                 f.seek(line_a)
                 f.write(data + '\n')
@@ -536,7 +555,8 @@ class Worker(QThread):
                                 if np.where(seq == np.array([1, 2, 1, 0]), True, False).all() \
                                         or np.where(seq == np.array([2, 1, 2, 0]), True, False).all():
                                     tri_valid = True
-                                    copyfile(source + r'\feff000%d.dat' % int(temp[0]), table_triple + r'\feff%d.dat' % i)
+                                    copyfile(source + r'\feff000%d.dat' % int(temp[0]),
+                                             table_triple + r'\feff%d.dat' % i)
                                     self.current_amount += 1
                                     break
                     if not tri_valid:
@@ -610,17 +630,23 @@ class MainWindow(QMainWindow, Ui_MainWindow_Table):
         self.statusbar.showMessage(result, 3000)
 
     def generate_start(self):
-        if not os.path.exists(os.getcwd() + r'\feff8.exe'):
-            QMessageBox.critical(self, 'Error', 'feff8.exe not found.\nPlease put it on the same folder as this program')
+        flist = np.asarray(os.listdir(os.getcwd()))
+        flist = flist[np.where(np.char.find(flist, 'feff') >= 0)[0]]
+        feff = np.where(np.char.find(flist, 'exe') >= 0)[0]
+        if not feff.size > 0:
+            QMessageBox.critical(self, 'Error',
+                                 'feff8.exe not found.\nPlease put it on the same folder as this program')
             return
+        feff = flist[feff[0]]
+        print(feff)
         self.startButton.setEnabled(False)
         self.pauseButton.setEnabled(True)
         self.endButton.setEnabled(True)
         self.msBox.setEnabled(False)
         print('start', self.thread.run_status)
         if self.thread.run_status.sum() == 0:
-            self.thread.file_init()
-        #self.index_create()
+            self.thread.file_init(feff)
+        # self.index_create()
         self.statusbar.showMessage('Generation running', 0)
         self.thread.run_flag = True
         self.thread.start()
