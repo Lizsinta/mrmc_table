@@ -245,22 +245,21 @@ class Worker(QThread):
         decimals = int(-log10(self.step))
         self.length = np.round(np.arange(self.l_head, self.l_tail + self.step, self.step), decimals)
         self.path_size = self.length.size ** 2 * self.angle.size
-        self.index_create()
+
 
         self.cal_amount = (self.length.size + np.where(self.length <= 3)[0].size) * (self.r_init.size - 1)
         if self.ms:
-            print(self.cal_amount, self.focus_index.size , self.r_init)
+            self.index_create()
             self.cal_amount += self.focus_index.size * (self.r_init.size - 1) * self.r_init.size
-            print(self.cal_amount)
         return 'successfully read'
 
     def amount_change(self):
         decimals = int(-log10(self.step))
         self.length = np.round(np.arange(self.l_head, self.l_tail + self.step, self.step), decimals)
         self.path_size = self.length.size ** 2 * self.angle.size
-        self.index_create()
         self.cal_amount = (self.length.size + np.where(self.length <= 3)[0].size) * (self.r_init.size - 1)
         if self.ms:
+            self.index_create()
             self.cal_amount += self.focus_index.size * (self.r_init.size - 1) * self.r_init.size
 
     def file_init(self, name):
