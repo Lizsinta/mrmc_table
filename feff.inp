@@ -1,0 +1,22 @@
+TITLE   Cu
+EDGE     K
+S02       1.0
+*         pot    xsph  fms   paths genfmt ff2chi
+CONTROL   1    1    1     1      1      1
+PRINT     0      0      0      0      0     0
+RPATH   6
+NLEG   4
+CRITERIA     4.00    10
+SIG2 0.0
+CORRECTION 11.5 0.00
+POLARIZATION 1 0 0
+POTENTIALS
+*   ipot   z [ label   l_scmt  l_fms  xnatph]
+0 29 Cu -1 -1 0
+1 8 O -1 -1 0
+2 16 S -1 -1 0
+ATOMS
+0.00000 0.00000 0.00000 0 Cu1 0.00000
+0.22593 0.22593 -1.8120555555555555555 1 O1 1.84
+-0.36399 -0.26399 2.1173434343434343434 2 S1 2.1
+END

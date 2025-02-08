@@ -59,7 +59,7 @@ def cal_angle(coor1, coor2, coor3):
 def run_feff(folder=''):
     while True:
         try:
-            info = win32process.CreateProcess('%s\\feff.exe' % folder, '',
+            info = win32process.CreateProcess('%s\\feff85L.exe' % folder, '',
                                               None, None, 0, win32process.CREATE_NO_WINDOW,
                                               None, '%s' % folder, win32process.STARTUPINFO())
         except pywintypes.error:
@@ -189,57 +189,39 @@ class Worker(QThread):
         self.focus_index = np.array([], dtype=int)
 
     def read_inp(self, file_name):
-        with open(file_name, 'r') as finp:
-            while True:
-                lines = finp.readline()
-                if not lines:
-                    return 'failed to read'
-                if not lines.find(' POTENTIALS') == -1:
-                    finp.readline()
-                    temp = finp.readline()
-                    self.atom[0] = temp.split()[2]
-                    self.atom_info.append('   %s    %s' % (temp.split()[1], self.atom[0]))
-                    atoms = np.array([])
-                    while True:
-                        lines = finp.readline()
-                        if lines.isspace() or not lines.split()[0].isdecimal():
-                            break
-                        atoms = np.append(atoms, lines.split()[2])
-                        self.atom_info.append('   %s    %s' % (lines.split()[1], atoms[-1]))
-                    for i in range(atoms.size):
-                        self.atom[i + 1] = atoms[i]
-                    self.r_init = np.zeros(atoms.size + 1)
-                    print(self.atom)
-                    print(self.atom_info)
-                    if atoms.size == 0:
-                        return 'no scattering atoms found'
-                    break
+        with open(file_name, 'r') as f:
+            self.feff = np.char.asarray(f.readlines())
+        try:
+            self.l_control = np.where(self.feff.find('CONTROL')>=0)[0][0]
+            self.l_print = np.where(self.feff.find('PRINT') >= 0)[0][0]
+            self.l_s02 = np.where(self.feff.find('S02')>=0)[0][0]
+            self.l_e0 = np.where(self.feff.find('CORRECT')>=0)[0][0]
+            self.l_polar = np.where(self.feff.find('POLAR') >= 0)[0][0]
+            self.l_atom = np.where(self.feff.find('ipot')>=0)[0][0]+1
+            self.l_start = np.where(self.feff.find('ATOMS')>=0)[0][0]+1
+            self.l_end = np.where(self.feff.find('END')>=0)[0][0]
+        except IndexError:
+            return 'format error'
 
-            while True:
-                lines = finp.readline()
-                if not lines or not lines.find('ATOMS') == -1:
-                    break
-            model_info = np.array([finp.readline().split()])
-            while True:
-                lines = finp.readline()
-                if not lines or not lines.find('END') == -1:
-                    break
-                model_info = np.vstack((model_info, lines.split()))
-
-            for i in range(model_info.shape[0]):
-                if int(model_info[i][3]) == 0:
-                    coor_a = np.array([float(model_info[i][0]), float(model_info[i][1]), float(model_info[i][2])])
-                    break
-            for i in range(model_info.shape[0]):
-                dist = sqrt((float(model_info[i][0]) - coor_a[0]) ** 2 +
-                            (float(model_info[i][1]) - coor_a[1]) ** 2 +
-                            (float(model_info[i][2]) - coor_a[2]) ** 2)
-                ipot = int(model_info[i][3])
-                if self.r_init[ipot] == 0:
-                    self.r_init[ipot] = dist
-                else:
-                    if self.r_init[ipot] > dist:
-                        self.r_init[ipot] = dist
+        #print(self.feff)
+        for i in range(4):
+            if not self.feff[self.l_atom+i] == '':
+                self.atom[i] = self.feff[self.l_atom+i].split()[2]
+                self.atom_info.append('%s %s'%(self.feff[self.l_atom+i].split()[1], self.feff[self.l_atom+i].split()[2]))
+            else:
+                break
+        print(self.atom)
+        print(self.atom_info)
+        model_info = np.char.split(self.feff[self.l_start:self.l_end])
+        self.r_init = np.zeros(len(model_info))
+        ipot_a = np.where(np.array([int(_[3]) for _ in model_info]) == 0)[0][0]
+        for i in range(len(model_info)):
+            ipot = int(model_info[i][3])
+            self.r_init[ipot] = sqrt((float(model_info[i][0]) - float(model_info[ipot_a][0])) ** 2 +
+                            (float(model_info[i][1]) - float(model_info[ipot_a][1])) ** 2 +
+                            (float(model_info[i][2]) - float(model_info[ipot_a][2])) ** 2)
+        print(self.r_init)
+        self.feff_t = self.feff.copy()
         self.inp_name = file_name.split('/')[-1]
         self.folder = file_name.split('/' + self.inp_name)[0]
         decimals = int(-log10(self.step))
@@ -267,7 +249,7 @@ class Worker(QThread):
         if not path.exists(self.folder + r'\temp'):
             makedirs(self.folder + r'\temp')
         popen('copy "%s" "%s"' % (self.folder + r'\%s' % self.inp_name, self.folder + r'\temp\feff.inp'))
-        popen('copy "%s" "%s"' % (os.getcwd() + r'\%s' % name, self.folder + r'\temp\feff.exe'))
+        popen('copy "%s" "%s"' % (os.getcwd() + r'\%s' % name, self.folder + r'\temp\feff85L.exe'))
         sleep(0.5)
         with open(self.folder + r'\%s' % self.inp_name, 'r+') as f:
             while True:
@@ -375,102 +357,31 @@ class Worker(QThread):
         self.sig_statusbar.emit('finished', 3000)
 
     def potential_cal(self, label, pot=True):
-        with open(self.folder + r'\temp\feff.inp', 'r+') as f:
-            f.seek(0)
-            while True:
-                lines = f.readline()
-                if not lines or not lines.find('ff2chi') == -1:
-                    break
-            line_c = f.tell()
-            length_c = len(f.readline())
-            line_p = f.tell()
-            length_p = len(f.readline())
-            data = ' CONTROL   1     1     1     1     1     1'
-            data = data.ljust(length_c - 1) + '\n'
-            f.seek(line_c)
-            f.write(data)
-            data = ' PRINT     0     0     0     0     0     0'
-            data = data.ljust(length_p - 1) + '\n'
-            f.seek(line_p)
-            f.write(data)
-            f.seek(0)
-            while True:
-                lines = f.readline()
-                if not lines or not lines.find('POTENTIALS') == -1:
-                    break
-            f.readline()
-            line_a = f.tell()
-            length_a = len(f.readline())
-            f.seek(f.tell())
-            data = '       %d%s' % (0, self.atom_info[0])
-            data = data.ljust(length_a - 1) + '\n'
-            f.seek(line_a)
-            f.write(data)
-            for i in range(len(label)):
-                line_a = f.tell()
-                length_a = len(f.readline())
-                f.seek(f.tell())
-                data = '       %d%s' % (i + 1, self.atom_info[label[i]])
-                data = data.ljust(length_a - 1) + '\n'
-                f.seek(line_a)
-                f.write(data)
-            while True:
-                line_i = f.tell()
-                data_i = f.readline()
-                length_i = len(data_i)
-                temp = data_i.split()
-                if len(temp) == 0:
-                    continue
-                if not temp[0].isdecimal():
-                    break
-                f.seek(line_i)
-                f.write(' '.ljust(length_i - 1) + '\n')
-            f.seek(0)
-            f.readline()
-            f.readline()
-            while True:
-                lines = f.readline()
-                if not lines or not lines.find('ATOMS') == -1:
-                    break
-            f.seek(f.tell())
-            f.write('   0.00000     0.00000    0.00000     0   %s\n' % self.atom[0])
-            for i in range(len(label)):
-                line_a = f.tell()
-                length_a = len(f.readline())
-                coor = np.zeros(3)
-                coor[i] += self.r_init[label[i]]
-                data = '   %.5f     %.5f    %.5f     %d   %s' % (coor[0], coor[1], coor[2], i + 1, self.atom[label[i]])
-                data = data.ljust(length_a - 1) if length_a > len(data) else data
-                f.seek(line_a)
-                f.write(data + '\n')
-            f.seek(f.tell())
-            f.write('END\n')
-            f.truncate()
+        self.feff_t = self.feff.copy()
+        self.feff_t[self.l_control] = ' CONTROL   1     1     1     1     1     1\n'
+        self.feff_t[self.l_print] = 'PRINT     0     0     0     0     0     0\n'
+        for i in range(1, len(self.atom_info)):
+            if i < len(label)+1:
+                self.feff_t[i + self.l_atom] = '%d %s'%(i, self.atom_info[label[i-1]])
+            else:
+                self.feff_t[i + self.l_atom] = '\n'
+        self.feff_t[self.l_start] = ('   0.00000     0.00000    0.00000     0   %s\n' % self.atom[0])
+        for i in range(len(label)):
+            coor = np.zeros(3)
+            coor[i] += self.r_init[label[i]]
+            self.feff_t[self.l_start + i + 1] = '   %.5f     %.5f    %.5f     %d   %s\n' % (coor[0], coor[1], coor[2], i + 1, self.atom[label[i]])
+        self.feff_t = self.feff_t[:self.l_start + len(label) + 2]
+        self.feff_t[-1] = 'END'
+        np.savetxt(self.folder + r'\temp\feff.inp', self.feff_t, fmt='%s', newline='')
         try:
             run_feff(folder=self.folder + r'\temp')
         except PermissionError:
             sleep(0.5)
             run_feff(folder=self.folder + r'\temp')
         sleep(0.5)
-        with open(self.folder + r'\temp\feff.inp', 'r+') as f:
-            f.seek(0)
-            while True:
-                lines = f.readline()
-                if not lines or not lines.find('ff2chi') == -1:
-                    break
-            line_c = f.tell()
-            length_c = len(f.readline())
-            line_p = f.tell()
-            length_p = len(f.readline())
-            if not pot:
-                f.seek(line_c)
-                data = ' CONTROL   0     1     1     1     1     1'
-                data = data.ljust(length_c - 1) + '\n'
-                f.write(data)
-            f.seek(line_p)
-            data = ' PRINT     0     0     0     0     0     3'
-            data = data.ljust(length_p - 1) + '\n'
-            f.write(data)
+        self.feff_t[self.l_control] = ' CONTROL   0     1     1     1     1     1\n'
+        self.feff_t[self.l_print] = 'PRINT     0     0     0     0     0     3\n'
+
 
     def feff_table_s_full(self, label):
         source = self.folder + r'\temp'
@@ -480,19 +391,8 @@ class Worker(QThread):
             self.potential_cal([label], pot=True)
         for step in range(self.run_status[2], self.length.size):
             if self.run_flag:
-                with open(source + r'\feff.inp', 'r+') as f:
-                    f.seek(0)
-                    f.readline()
-                    f.readline()
-                    while True:
-                        lines = f.readline()
-                        if not lines or not lines[:10].find('ATOMS') == -1:
-                            break
-                    f.readline()
-                    f.seek(f.tell())
-                    f.write(' %.6f 0 0 1 %s\n' % (self.length[step], self.atom[label]))
-                    f.write('END')
-                    f.truncate()
+                self.feff_t[self.l_start + 1] = ' %.6f 0 0 1   %s\n' % (self.length[step], self.atom[label])
+                np.savetxt(self.folder + r'\temp\feff.inp', self.feff_t, fmt='%s', newline='')
                 run_feff(source)
                 copyfile(source + r'\feff0001.dat', table_single + r'\feff%d.dat' % step)
                 if self.length[step] <= 3:
@@ -704,7 +604,7 @@ class MainWindow(QMainWindow, Ui_MainWindow_Table):
                     self.thread.l_tail = maxi
             elif signal.objectName() == 'stepBox':
                 self.thread.step = float(self.stepBox.currentText())
-            if not self.thread.focus_index.size == 0:
+            if not self.thread.cal_amount == 0:
                 self.thread.amount_change()
                 self.totalLabel.display(self.thread.cal_amount)
                 self.startButton.setEnabled(True)
